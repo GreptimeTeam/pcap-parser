@@ -1,22 +1,22 @@
 use pcap_parser::*;
 use std::env;
 use std::error::Error;
-use std::fs::File;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     for arg in env::args().skip(1) {
-        print_pcap_info(&arg).unwrap();
+        print_pcap_info(&arg).await.unwrap();
     }
 }
 
-fn print_pcap_info(arg: &str) -> Result<(), Box<dyn Error>> {
+async fn print_pcap_info(arg: &str) -> Result<(), Box<dyn Error>> {
     println!("Name: {}", arg);
 
-    let file = File::open(arg)?;
-    let file_size = file.metadata()?.len();
+    let file = tokio::fs::File::open(arg).await?;
+    let file_size = file.metadata().await?.len();
     println!("\tfile size: {}", file_size);
 
-    let mut reader = create_reader(10 * 1024, file)?;
+    let mut reader = create_reader(10 * 1024, file).await?;
 
     // Note that we do not call `consume()` here, so the next call to `.next()`
     // will return the same block
@@ -53,7 +53,7 @@ fn print_pcap_info(arg: &str) -> Result<(), Box<dyn Error>> {
             }
             Err(PcapError::Eof) => break,
             Err(PcapError::Incomplete(_)) => {
-                reader.refill().unwrap();
+                reader.refill().await.unwrap();
             }
             Err(e) => panic!("Unexpected error: {}", e),
         }

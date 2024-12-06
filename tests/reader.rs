@@ -1,9 +1,9 @@
 use pcap_parser::{create_reader, PcapError};
 
-#[test]
-fn test_empty_reader_error() {
+#[tokio::test]
+async fn test_empty_reader_error() {
     let empty: &[u8] = &[];
-    let res = create_reader(1024, empty);
+    let res = create_reader(1024, empty).await;
     assert!(res.is_err());
     if let Err(err) = res {
         assert_eq!(err, PcapError::Eof);
@@ -12,10 +12,10 @@ fn test_empty_reader_error() {
     }
 }
 
-#[test]
-fn test_empty_reader_incomplete() {
+#[tokio::test]
+async fn test_empty_reader_incomplete() {
     let empty: &[u8] = &[0];
-    let res = create_reader(1024, empty);
+    let res = create_reader(1024, empty).await;
     assert!(res.is_err());
     if let Err(err) = res {
         assert!(matches!(err, PcapError::Incomplete(_)));

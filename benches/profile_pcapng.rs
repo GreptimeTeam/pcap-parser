@@ -14,9 +14,11 @@ use pcap_parser::{traits::PcapReaderIterator, PcapError, PcapNGReader};
 use pprof::criterion::{Output, PProfProfiler};
 use std::fs;
 
-fn do_reader_pcapng(bytes: &[u8]) {
+async fn do_reader_pcapng(bytes: &[u8]) {
     let mut num_blocks = 0;
-    let mut reader = PcapNGReader::new(65536, bytes).expect("could not create reader");
+    let mut reader = PcapNGReader::new(65536, bytes)
+        .await
+        .expect("could not create reader");
     loop {
         match reader.next() {
             Ok((offset, _block)) => {
@@ -25,7 +27,7 @@ fn do_reader_pcapng(bytes: &[u8]) {
             }
             Err(PcapError::Eof) => break,
             Err(PcapError::Incomplete(_)) => {
-                reader.refill().unwrap();
+                reader.refill().await.unwrap();
             }
             Err(e) => panic!("unexpected error {:?}", e),
         }

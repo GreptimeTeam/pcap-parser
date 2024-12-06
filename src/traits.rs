@@ -1,6 +1,7 @@
 use crate::blocks::PcapBlockOwned;
 use crate::error::PcapError;
 use crate::read_u32_e;
+use async_trait::async_trait;
 use rusticata_macros::align32;
 
 /// Common methods for PcapNG blocks
@@ -98,7 +99,8 @@ pub trait PcapNGPacketBlock {
 /// **The blocks already read, and underlying data, must be discarded before calling
 /// `consume` or `refill`.** It is the caller's responsibility to call functions in the correct
 /// order.
-pub trait PcapReaderIterator {
+#[async_trait]
+pub trait PcapReaderIterator: Send {
     /// Get the next pcap block, if possible. Returns the number of bytes read and the block.
     ///
     /// The returned object is valid until `consume` or `refill` is called.
@@ -119,7 +121,7 @@ pub trait PcapReaderIterator {
     ///
     /// **The blocks already read, and underlying data, must be discarded before calling
     /// this function.**
-    fn refill(&mut self) -> Result<(), PcapError<&[u8]>>;
+    async fn refill(&mut self) -> Result<(), PcapError<&[u8]>>;
     /// Get the position in the internal buffer. Can be used to determine if `refill` is required.
     fn position(&self) -> usize;
     /// Grow size of the internal buffer.

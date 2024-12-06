@@ -2,9 +2,8 @@ use hex_literal::hex;
 use pcap_parser::pcapng::*;
 use pcap_parser::traits::*;
 use pcap_parser::*;
-use std::fs::File;
-use std::io::BufReader;
-use std::io::Read;
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, BufReader};
 
 static TEST001_BE: &[u8] = include_bytes!("../assets/test001-be.pcapng");
 static TEST001_LE: &[u8] = include_bytes!("../assets/test001-le.pcapng");
@@ -340,13 +339,15 @@ fn test_pcapng_simple_packets() {
     }
 }
 
-#[test]
-fn test_pcapng_reader() {
+#[tokio::test]
+async fn test_pcapng_reader() {
     let path = "assets/test001-le.pcapng";
-    let file = File::open(path).unwrap();
+    let file = File::open(path).await.unwrap();
     let buffered = BufReader::new(file);
     let mut num_blocks = 0;
-    let mut reader = PcapNGReader::new(65536, buffered).expect("PcapNGReader");
+    let mut reader = PcapNGReader::new(65536, buffered)
+        .await
+        .expect("PcapNGReader");
     let expected_origlen = &[0, 0, 314, 342, 314, 342];
     while let Ok((offset, block)) = reader.next() {
         match block {
@@ -364,13 +365,15 @@ fn test_pcapng_reader() {
     assert_eq!(num_blocks, 6);
 }
 
-#[test]
-fn test_pcapng_reader_be() {
+#[tokio::test]
+async fn test_pcapng_reader_be() {
     let path = "assets/test001-be.pcapng";
-    let file = File::open(path).unwrap();
+    let file = File::open(path).await.unwrap();
     let buffered = BufReader::new(file);
     let mut num_blocks = 0;
-    let mut reader = PcapNGReader::new(65536, buffered).expect("PcapNGReader");
+    let mut reader = PcapNGReader::new(65536, buffered)
+        .await
+        .expect("PcapNGReader");
     let expected_origlen = &[0, 0, 314, 342, 314, 342];
     loop {
         match reader.next() {
@@ -389,7 +392,7 @@ fn test_pcapng_reader_be() {
             }
             Err(PcapError::Eof) => break,
             Err(PcapError::Incomplete(_)) => {
-                reader.refill().unwrap();
+                reader.refill().await.unwrap();
             }
             Err(e) => panic!("error while reading: {:?}", e),
         }
@@ -406,10 +409,12 @@ fn err_eof() {
 }
 
 // related issue: https://github.com/rusticata/pcap-parser/issues/29
-#[test]
-fn test_reader_buffer_too_small() {
-    let file = File::open("assets/err-buffertoosmall.pcapng").unwrap();
-    let mut reader = create_reader(1024, file).expect("PcapNGReader");
+#[tokio::test]
+async fn test_reader_buffer_too_small() {
+    let file = tokio::fs::File::open("assets/err-buffertoosmall.pcapng")
+        .await
+        .unwrap();
+    let mut reader = create_reader(1024, file).await.expect("PcapNGReader");
     let mut num_blocks = 0;
     let mut num_refills = 0;
     const MAX_REFILLS: usize = 20;
@@ -424,7 +429,7 @@ fn test_reader_buffer_too_small() {
             Err(PcapError::Incomplete(_)) => {
                 num_refills += 1;
                 assert!(num_refills < MAX_REFILLS);
-                reader.refill().unwrap();
+                reader.refill().await.unwrap();
             }
             Err(PcapError::BufferTooSmall) => break,
             Err(e) => panic!("Unexpected error {:?}", e),
@@ -434,14 +439,14 @@ fn test_reader_buffer_too_small() {
 }
 
 // related issue: https://github.com/rusticata/pcap-parser/issues/30
-#[test]
-fn test_pcapng_earlyeofandnotexhausted() {
+#[tokio::test]
+async fn test_pcapng_earlyeofandnotexhausted() {
     let path = "assets/test001-le.pcapng";
-    let file = File::open(path).unwrap();
+    let file = File::open(path).await.unwrap();
     let buffered = BufReader::new(file);
 
     // 96 is exactly the size of the first SHB, so the first consume will empty the buffer
-    let mut reader = PcapNGReader::new(96, buffered).expect("PcapNGReader");
+    let mut reader = PcapNGReader::new(96, buffered).await.expect("PcapNGReader");
     let (offset, _block) = reader.next().expect("could not read first block");
     reader.consume(offset);
     // the second read happens in the following situation: buf.available_data == 0 AND buf.position == 0
@@ -454,15 +459,17 @@ fn test_pcapng_earlyeofandnotexhausted() {
     assert!(matches!(res, Err(PcapError::Incomplete(4))));
 }
 
-#[test]
-fn test_pcapng_reader_eof() {
+#[tokio::test]
+async fn test_pcapng_reader_eof() {
     let path = "assets/test001-le.pcapng";
-    let mut file = File::open(path).unwrap();
+    let mut file = File::open(path).await.unwrap();
     let mut buf = vec![0; 96];
-    file.read_exact(&mut buf).unwrap();
+    file.read_exact(&mut buf).await.unwrap();
 
     // 96 is exactly the size of the first SHB, so the first consume will empty the buffer
-    let mut reader = PcapNGReader::new(250, buf.as_slice()).expect("PcapNGReader");
+    let mut reader = PcapNGReader::new(250, buf.as_slice())
+        .await
+        .expect("PcapNGReader");
     let (offset, _block) = reader.next().expect("could not read first block");
     reader.consume(offset);
 
@@ -470,7 +477,7 @@ fn test_pcapng_reader_eof() {
     let res = reader.next();
     assert!(matches!(res, Err(PcapError::Incomplete(_))));
 
-    reader.refill().unwrap();
+    reader.refill().await.unwrap();
 
     match reader.next() {
         Err(PcapError::Eof) => (),

@@ -5,9 +5,10 @@ use crate::pcap::{
     LegacyPcapBlock, PcapHeader,
 };
 use crate::traits::PcapReaderIterator;
+use async_trait::async_trait;
 use circular::Buffer;
 use nom::{IResult, Needed, Offset};
-use std::io::Read;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Parsing iterator over legacy pcap data (streaming version)
 ///
@@ -31,42 +32,45 @@ use std::io::Read;
 /// ## Example
 ///
 /// ```rust
-/// use pcap_parser::*;
-/// use pcap_parser::traits::PcapReaderIterator;
-/// use std::fs::File;
-///
-/// # let path = "assets/ntp.pcap";
-/// let file = File::open(path).unwrap();
-/// let mut num_blocks = 0;
-/// let mut reader = LegacyPcapReader::new(65536, file).expect("LegacyPcapReader");
-/// loop {
-///     match reader.next() {
-///         Ok((offset, block)) => {
-///             println!("got new block");
-///             num_blocks += 1;
-///             match block {
-///                 PcapBlockOwned::LegacyHeader(_hdr) => {
-///                     // save hdr.network (linktype)
-///                 },
-///                 PcapBlockOwned::Legacy(_b) => {
-///                     // use linktype to parse b.data()
-///                 },
-///                 PcapBlockOwned::NG(_) => unreachable!(),
-///             }
-///             reader.consume(offset);
-///         },
-///         Err(PcapError::Eof) => break,
-///         Err(PcapError::Incomplete(_)) => {
-///             reader.refill().unwrap();
-///         },
-///         Err(e) => panic!("error while reading: {:?}", e),
-///     }
+/// #[tokio::main]
+/// async fn main() {
+///    use pcap_parser::*;
+///    use pcap_parser::traits::PcapReaderIterator;
+///    use tokio::fs::File;
+///    
+///    let path = "assets/ntp.pcap";
+///    let file = File::open(path).await.unwrap();
+///    let mut num_blocks = 0;
+///    let mut reader = LegacyPcapReader::new(65536, file).await.expect("LegacyPcapReader");
+///    loop {
+///        match reader.next() {
+///            Ok((offset, block)) => {
+///                println!("got new block");
+///                num_blocks += 1;
+///                match block {
+///                    PcapBlockOwned::LegacyHeader(_hdr) => {
+///                        // save hdr.network (linktype)
+///                    },
+///                    PcapBlockOwned::Legacy(_b) => {
+///                        // use linktype to parse b.data()
+///                    },
+///                    PcapBlockOwned::NG(_) => unreachable!(),
+///                }
+///                reader.consume(offset);
+///            },
+///            Err(PcapError::Eof) => break,
+///            Err(PcapError::Incomplete(_)) => {
+///                reader.refill().await.unwrap();
+///            },
+///            Err(e) => panic!("error while reading: {:?}", e),
+///        }
+///    }
+///    println!("num_blocks: {}", num_blocks);
 /// }
-/// println!("num_blocks: {}", num_blocks);
 /// ```
 pub struct LegacyPcapReader<R>
 where
-    R: Read,
+    R: AsyncRead + Unpin,
 {
     header: PcapHeader,
     reader: R,
@@ -81,22 +85,25 @@ type LegacyParseFn = fn(&[u8]) -> IResult<&[u8], LegacyPcapBlock, PcapError<&[u8
 
 impl<R> LegacyPcapReader<R>
 where
-    R: Read,
+    R: AsyncRead + Unpin,
 {
     /// Creates a new `LegacyPcapReader<R>` with the provided buffer capacity.
-    pub fn new(
+    pub async fn new(
         capacity: usize,
         reader: R,
     ) -> Result<LegacyPcapReader<R>, PcapError<&'static [u8]>> {
         let buffer = Buffer::with_capacity(capacity);
-        Self::from_buffer(buffer, reader)
+        Self::from_buffer(buffer, reader).await
     }
     /// Creates a new `LegacyPcapReader<R>` using the provided `Buffer`.
-    pub fn from_buffer(
+    pub async fn from_buffer(
         mut buffer: Buffer,
         mut reader: R,
     ) -> Result<LegacyPcapReader<R>, PcapError<&'static [u8]>> {
-        let sz = reader.read(buffer.space()).or(Err(PcapError::ReadError))?;
+        let sz = reader
+            .read(buffer.space())
+            .await
+            .or(Err(PcapError::ReadError))?;
         buffer.fill(sz);
         let (_rem, header) = match parse_pcap_header(buffer.data()) {
             Ok((r, h)) => Ok((r, h)),
@@ -126,9 +133,10 @@ where
     }
 }
 
+#[async_trait]
 impl<R> PcapReaderIterator for LegacyPcapReader<R>
 where
-    R: Read,
+    R: AsyncRead + Unpin + Send,
 {
     fn next(&mut self) -> Result<(usize, PcapBlockOwned), PcapError<&'_ [u8]>> {
         if !self.header_sent {
@@ -185,7 +193,7 @@ where
     fn consumed(&self) -> usize {
         self.consumed
     }
-    fn refill(&mut self) -> Result<(), PcapError<&[u8]>> {
+    async fn refill(&mut self) -> Result<(), PcapError<&[u8]>> {
         self.buffer.shift();
         let space = self.buffer.space();
         // check if available space is empty, so we can distinguish
@@ -193,7 +201,11 @@ where
         if space.is_empty() {
             return Ok(());
         }
-        let sz = self.reader.read(space).or(Err(PcapError::ReadError))?;
+        let sz = self
+            .reader
+            .read(space)
+            .await
+            .or(Err(PcapError::ReadError))?;
         self.reader_exhausted = sz == 0;
         self.buffer.fill(sz);
         Ok(())
